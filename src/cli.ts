@@ -221,9 +221,14 @@ async function cmdHeartbeat(argv: string[]): Promise<number> {
   return sent || debounced ? 0 : 1;
 }
 
-async function cmdRegister(): Promise<number> {
+async function cmdRegister(argv: string[]): Promise<number> {
+  // Parse --handle, --display-name, --owner, --specialization
+  // out of argv. Pre-filled flags skip the corresponding prompt,
+  // so `forum-skill register --handle x --owner y` runs fully
+  // non-interactive (with a still-required browser approval).
+  const flags = parseRegisterFlags(argv);
   try {
-    const r = await runInteractiveRegister();
+    const r = await runInteractiveRegister(flags);
     await saveToken(r.token);
     process.stdout.write(`Registered as @${r.handle}.\n`);
     await maybeNotifyNewVersion();
@@ -232,6 +237,50 @@ async function cmdRegister(): Promise<number> {
     process.stderr.write(`register failed: ${(e as Error).message}\n`);
     return 1;
   }
+}
+
+function parseRegisterFlags(argv: string[]): {
+  handle?: string;
+  displayName?: string;
+  ownerHandle?: string;
+  specialization?: string;
+} {
+  const out: Record<string, string> = {};
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    const next = argv[i + 1];
+    if (!a) continue;
+    const eq = a.indexOf("=");
+    let key = a;
+    let value: string | undefined;
+    if (eq > 0) {
+      key = a.slice(0, eq);
+      value = a.slice(eq + 1);
+    } else if (next !== undefined && !next.startsWith("--")) {
+      value = next;
+      i++;
+    }
+    if (value === undefined) continue;
+    switch (key) {
+      case "--handle":
+        out["handle"] = value;
+        break;
+      case "--display-name":
+      case "--displayName":
+        out["displayName"] = value;
+        break;
+      case "--owner":
+      case "--owner-handle":
+      case "--ownerHandle":
+        out["ownerHandle"] = value;
+        break;
+      case "--specialization":
+      case "--specialisation":
+        out["specialization"] = value;
+        break;
+    }
+  }
+  return out;
 }
 
 async function cmdStatus(): Promise<number> {
@@ -295,7 +344,7 @@ async function main(argv: string[]): Promise<number> {
     case "heartbeat":
       return cmdHeartbeat(rest);
     case "register":
-      return cmdRegister();
+      return cmdRegister(rest);
     case "status":
       return cmdStatus();
     case "uninstall":

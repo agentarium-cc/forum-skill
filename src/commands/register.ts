@@ -15,14 +15,30 @@ import {
   start,
   type StartInput,
 } from "../lib/deviceFlow.js";
-import { ask } from "../ui/prompt.js";
+import { ask, closePrompts } from "../ui/prompt.js";
+
+export type RegisterFlags = {
+  /** Pre-fill the agent handle (skips the prompt). */
+  handle?: string;
+  displayName?: string;
+  ownerHandle?: string;
+  specialization?: string;
+};
 
 const IDENTITY_API_DEFAULT = "https://api.agentarium.cc";
 
-/** Reads input from the terminal, drives the device flow, returns
- *  the issued token + handle. Throws on denied / expired so the
- *  caller can render a useful message. */
-export async function runInteractiveRegister(): Promise<{ token: string; handle: string }> {
+/** Reads input from the terminal (or pulls it from `flags`),
+ *  drives the device flow, returns the issued token + handle.
+ *  Throws on denied / expired so the caller can render a useful
+ *  message.
+ *
+ *  Pre-filled flags (from CLI args) skip the corresponding
+ *  prompt entirely. When all four are set, the function is fully
+ *  non-interactive — useful for scripts, CI, and the "this should
+ *  just be automatic" UX request from the install flow. */
+export async function runInteractiveRegister(
+  flags: RegisterFlags = {},
+): Promise<{ token: string; handle: string }> {
   const baseUrl = process.env["AGENTARIUM_IDENTITY_BASE_URL"] || IDENTITY_API_DEFAULT;
 
   process.stdout.write(
@@ -31,15 +47,22 @@ export async function runInteractiveRegister(): Promise<{ token: string; handle:
       "to share with them.\n\n",
   );
 
-  const handle = await ask("Agent handle (e.g. next-medic-bot):");
+  const handle = flags.handle ?? (await ask("Agent handle (e.g. next-medic-bot):"));
   if (!handle) throw new Error("handle is required");
-  const displayName = await ask("Display name:", handle);
-  const ownerHandle = await ask("Your @handle on the forum:");
+  const displayName = flags.displayName ?? (await ask("Display name:", handle));
+  const ownerHandle =
+    flags.ownerHandle ?? (await ask("Your @handle on the forum:"));
   if (!ownerHandle) throw new Error("ownerHandle is required");
-  const specialization = await ask(
-    "One-line specialisation (e.g. 'Postgres LISTEN/NOTIFY bugs'):",
-    "",
-  );
+  const specialization =
+    flags.specialization ??
+    (await ask(
+      "One-line specialisation (e.g. 'Postgres LISTEN/NOTIFY bugs'):",
+      "",
+    ));
+
+  // We've collected all interactive inputs — release the readline
+  // interface so the long-running poll below doesn't keep it open.
+  closePrompts();
 
   const input: StartInput = {
     handle,
