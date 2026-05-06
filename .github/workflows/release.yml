@@ -5,17 +5,39 @@ name: release
 #   git tag v0.1.0
 #   git push --tags
 #
-# REPO SECRETS REQUIRED
+# AUTH: npm Trusted Publishing (OIDC). No NPM_TOKEN required.
 #
-#   NPM_TOKEN   — an npmjs.com Automation token (skips 2FA on
-#                 publish). Create at:
-#                 https://www.npmjs.com/settings/<your-user>/tokens
-#                 → "New Granular Access Token" → set "Automation"
-#                 → grant Read & Write to the `forum-skill` package.
+# Setup (one-time, on npmjs.com):
 #
-# This workflow ALSO publishes a provenance attestation via
-# GitHub OIDC (no extra secret needed — the `id-token: write`
-# permission below is what makes that work).
+#   1. Sign in at https://www.npmjs.com.
+#   2. Open this package's settings:
+#        https://www.npmjs.com/package/forum-skill/access
+#      (after the FIRST manual publish — see "bootstrap" below).
+#   3. Under "Publishing access" → "Trusted Publisher" → "Add":
+#        Repository owner:    agentarium-cc
+#        Repository name:     forum-skill
+#        Workflow filename:   release.yml
+#        Environment:         (leave empty unless you wire one up)
+#   4. Save.
+#
+# That's the entire setup. From here on, this workflow exchanges
+# its GitHub OIDC token for an ephemeral npm publish token —
+# nothing is stored as a long-lived secret.
+#
+# BOOTSTRAP: The very first publish has to happen manually because
+# the package doesn't exist on npm yet (and you can't add a Trusted
+# Publisher to a package that doesn't exist). Locally:
+#
+#     npm login
+#     npm publish --access public --provenance
+#
+# Then configure the Trusted Publisher in the npm UI per the steps
+# above. Every subsequent release goes through this workflow with
+# zero credentials.
+#
+# Why we use npm 11.5.1+: that's the first npm version with
+# documented OIDC publish support. Node 22 LTS ships with npm
+# 10.x, so we upgrade explicitly before `npm publish`.
 
 on:
   push:
@@ -26,20 +48,25 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      # OIDC token is what `npm publish --provenance` exchanges for
-      # a Sigstore certificate. Without `id-token: write`, npm will
-      # publish without provenance and emit a warning.
+      # OIDC token — both Trusted Publishing AND --provenance need
+      # `id-token: write`. Without this, the OIDC exchange fails
+      # and `npm publish` falls back to looking for a token.
       id-token: write
     steps:
       - uses: actions/checkout@v4
+      # pnpm/action-setup@v4 reads `packageManager` from
+      # package.json — don't pass `version:` here.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           registry-url: https://registry.npmjs.org
           cache: pnpm
+      # Node 22 ships with npm 10.x; OIDC trusted publishing
+      # needs >= 11.5.1. We upgrade in-place before publish so
+      # the rest of the job uses the new npm.
+      - name: Upgrade npm to >=11.5.1 (Trusted Publishing support)
+        run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
@@ -56,10 +83,13 @@ jobs:
             exit 1
           fi
 
-      - name: Publish to npm
+      # No NODE_AUTH_TOKEN here. With Trusted Publishing
+      # configured on npmjs.com, the npm CLI auto-exchanges the
+      # GitHub OIDC token (provided by `id-token: write`) for an
+      # ephemeral publish credential. Provenance is signed via
+      # the same OIDC flow.
+      - name: Publish to npm (Trusted Publishing + Provenance)
         run: npm publish --access public --provenance
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
 
       - name: Create GitHub release
         uses: softprops/action-gh-release@v2

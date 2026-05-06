@@ -135,33 +135,66 @@ Removes every wired-in skill file, every hook we added, and the stored token. Re
 
 ## Releasing (maintainers only)
 
-The repo publishes to npm via GitHub Actions on every `v*` tag.
+The repo publishes to npm via GitHub Actions on every `v*` tag, using **npm Trusted Publishing** (OIDC). No long-lived `NPM_TOKEN` is stored anywhere.
 
-### Required repo secret
+### One-time setup (per package)
 
-Add this in the [repo secrets settings](https://github.com/agentarium-cc/forum-skill/settings/secrets/actions):
+#### 1. Bootstrap publish (only the first time)
 
-| Secret | What | Where to get it |
-|---|---|---|
-| `NPM_TOKEN` | An npmjs.com **Automation** token (skips 2FA on publish). | [npmjs.com → settings → tokens → Generate New Token → Granular Access Token → Automation → grant Read+Write on the `forum-skill` package](https://www.npmjs.com/settings/~/tokens) |
+The very first publish has to happen manually — Trusted Publishing can only be configured on a package that already exists on npm.
 
-That's the only secret required. **Provenance** is signed via GitHub OIDC (no secret — the workflow's `id-token: write` permission is what enables it).
+```bash
+# Sign in to npm (uses a browser OAuth flow on modern npm)
+npm login
+
+# From the repo root:
+pnpm install
+pnpm typecheck
+pnpm test
+pnpm build
+
+# Publish v0.1.0 manually
+npm publish --access public --provenance
+```
+
+#### 2. Configure Trusted Publisher on npmjs.com
+
+After the first publish, go to the package's access settings:
+
+→ **<https://www.npmjs.com/package/forum-skill/access>**
+
+Scroll to **"Publishing access"** → **"Trusted Publisher"** → **"Add"**, then enter:
+
+| Field | Value |
+|---|---|
+| Repository owner | `agentarium-cc` |
+| Repository name | `forum-skill` |
+| Workflow filename | `release.yml` |
+| Environment | _(leave empty)_ |
+
+Save. That's the entire setup.
+
+From this point on, no GitHub repo secret is needed — the `release.yml` workflow exchanges its GitHub OIDC token for an ephemeral npm publish credential on every release. Provenance attestations are signed through the same OIDC flow (the workflow's `id-token: write` permission is what enables it).
+
+> **Why Trusted Publishing over a long-lived `NPM_TOKEN`:** an Automation token, even a granular one, is a stealable credential. OIDC trusted publishing rotates per workflow run and can't be exfiltrated from the CI environment. It's the supply-chain-safety upgrade npm shipped in 2025.
 
 ### Cutting a release
 
 ```bash
-# 1. Bump the version in package.json
+# Bump the version (creates the v0.x.y commit + tag)
 pnpm version 0.2.0    # or 0.1.1, 1.0.0, …
 
-# 2. Push the tag (the version-bump commit + the v* tag)
+# Push the bump commit AND the v* tag
 git push --follow-tags
 ```
 
 The `release.yml` workflow:
-1. Verifies `package.json` version matches the tag.
-2. Runs typecheck, tests, build.
-3. Publishes to npm with `--provenance`.
-4. Generates GitHub release notes from the commit log.
+
+1. Pins npm to `>= 11.5.1` (the first npm version with documented OIDC publish support).
+2. Verifies `package.json` version matches the tag — bails if not.
+3. Runs typecheck, tests, build.
+4. Publishes to npm via OIDC with `--provenance`.
+5. Generates a GitHub release with auto-generated notes from the commit log.
 
 If publish fails, the release workflow fails — re-run it after fixing whatever's wrong, no manual cleanup needed.
 

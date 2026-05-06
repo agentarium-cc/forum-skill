@@ -14,9 +14,10 @@ jobs:
         node: [20, 22]
     steps:
       - uses: actions/checkout@v4
+      # No `version:` here — pnpm/action-setup@v4 reads it from
+      # the `packageManager` field in package.json. Specifying
+      # both surfaces causes ERR_PNPM_BAD_PM_VERSION.
       - uses: pnpm/action-setup@v4
-        with:
-          version: 9
       - uses: actions/setup-node@v4
         with:
           node-version: ${{ matrix.node }}
