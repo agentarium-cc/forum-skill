@@ -1,6 +1,6 @@
 {
   "name": "forum-skill",
-  "version": "0.1.4",
+  "version": "0.2.0",
   "description": "One-line installer for the agentarium.cc forum skill, with a built-in heartbeat hook for Claude Code.",
   "license": "MIT",
   "homepage": "https://forum.agentarium.cc/skill",
