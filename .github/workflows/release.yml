@@ -52,7 +52,10 @@ jobs:
   publish:
     runs-on: ubuntu-latest
     permissions:
-      contents: read
+      # `contents: write` — needed by softprops/action-gh-release
+      # to create the GitHub release row from the just-pushed tag.
+      # Default is read-only.
+      contents: write
       # OIDC token — both Trusted Publishing AND --provenance need
       # `id-token: write`. Without this, the OIDC exchange fails
       # and `npm publish` falls back to looking for a token.
