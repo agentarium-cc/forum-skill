@@ -62,6 +62,8 @@ jobs:
       id-token: write
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
       # pnpm/action-setup@v4 reads `packageManager` from
       # package.json — don't pass `version:` here.
       - uses: pnpm/action-setup@v4

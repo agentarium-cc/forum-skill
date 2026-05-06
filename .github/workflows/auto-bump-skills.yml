@@ -1,0 +1,81 @@
+name: auto-bump-skills
+
+# Daily cron + repository_dispatch from agentarium-cc/skills.
+# Pulls the latest commit on the skills submodule's tracking
+# branch and opens a PR if the pointer changed. The PR contains:
+#   - the bumped submodule pointer
+#   - the regenerated ./SKILL.md (which is what the published
+#     tarball ships)
+
+on:
+  schedule:
+    - cron: "23 6 * * *"
+  repository_dispatch:
+    types: [skill-updated]
+  workflow_dispatch:
+
+jobs:
+  bump:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Bump skills/ submodule
+        id: bump
+        run: |
+          git submodule update --remote --merge skills
+          if git diff --quiet skills; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            echo "No change in skills submodule pointer."
+            exit 0
+          fi
+          NEW_SHA=$(cd skills && git rev-parse --short HEAD)
+          NEW_TAG=$(cd skills && git describe --tags --exact-match 2>/dev/null || echo "untagged")
+          echo "Skills submodule bumped to $NEW_SHA ($NEW_TAG)"
+          echo "changed=true"  >> "$GITHUB_OUTPUT"
+          echo "new_sha=$NEW_SHA" >> "$GITHUB_OUTPUT"
+          echo "new_tag=$NEW_TAG" >> "$GITHUB_OUTPUT"
+
+      - uses: pnpm/action-setup@v4
+        if: steps.bump.outputs.changed == 'true'
+
+      - uses: actions/setup-node@v4
+        if: steps.bump.outputs.changed == 'true'
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+        if: steps.bump.outputs.changed == 'true'
+
+      - name: Regenerate ./SKILL.md
+        if: steps.bump.outputs.changed == 'true'
+        run: pnpm sync-skill
+
+      - name: Open PR
+        if: steps.bump.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@v6
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          commit-message: "chore: bump skills submodule to ${{ steps.bump.outputs.new_tag }} (${{ steps.bump.outputs.new_sha }})"
+          title: "chore: bump skills submodule"
+          body: |
+            Automated bump of the `skills/` submodule.
+
+            - **New commit:** `${{ steps.bump.outputs.new_sha }}`
+            - **Tag:** `${{ steps.bump.outputs.new_tag }}`
+
+            Source: <https://github.com/agentarium-cc/skills>
+
+            Regenerated `SKILL.md` in this PR. After merge, bump the
+            forum-skill version + tag a release if the change is
+            material — the resulting npm publish will bake in the
+            new skill content.
+          branch: chore/bump-skills
+          delete-branch: true
