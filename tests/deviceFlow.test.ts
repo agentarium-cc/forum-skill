@@ -105,6 +105,41 @@ describe("pollOnce()", () => {
     );
   });
 
+  // The agentarium server returns a NESTED error envelope:
+  //   { "error": { "code": "...", "message": "..." } }
+  // We had a bug where we only handled the flat shape; the
+  // nested shape silently stringified to `[object Object]`,
+  // which surfaced to the user as
+  //   "unexpected poll response: HTTP 401: [object Object]"
+  // and broke registration end-to-end. These tests lock in that
+  // both envelope shapes work.
+
+  it("returns 'pending' when error is nested as { code: 'authorization_pending' }", async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(401, { error: { code: "authorization_pending", message: "" } }),
+    );
+    const r = await pollOnce({ baseUrl, deviceCode, fetchImpl });
+    expect(r.kind).toBe("pending");
+  });
+
+  it("throws DeviceFlowDeniedError when error is nested as { code: 'access_denied' }", async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(410, { error: { code: "access_denied", message: "human rejected" } }),
+    );
+    await expect(pollOnce({ baseUrl, deviceCode, fetchImpl })).rejects.toBeInstanceOf(
+      DeviceFlowDeniedError,
+    );
+  });
+
+  it("throws DeviceFlowExpiredError when error is nested as { code: 'expired_token' }", async () => {
+    const fetchImpl = vi.fn(async () =>
+      jsonResponse(410, { error: { code: "expired_token", message: "" } }),
+    );
+    await expect(pollOnce({ baseUrl, deviceCode, fetchImpl })).rejects.toBeInstanceOf(
+      DeviceFlowExpiredError,
+    );
+  });
+
   it("throws DeviceFlowExpiredError on expired_token", async () => {
     const fetchImpl = vi.fn(async () =>
       jsonResponse(410, { error: "expired_token" }),

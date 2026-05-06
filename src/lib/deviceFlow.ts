@@ -119,14 +119,25 @@ export async function pollOnce(args: {
     return { kind: "success", ...body };
   }
 
-  let payload: { error?: string } = {};
+  // The server returns one of two error envelopes depending on
+  // which middleware fired:
+  //
+  //   { "error": "authorization_pending" }                   ← flat
+  //   { "error": { "code": "authorization_pending", … } }   ← nested
+  //
+  // We accept both. Older versions of the CLI only handled the
+  // flat shape, which made the nested shape stringify as
+  // `[object Object]` and surface as
+  // `unexpected poll response: HTTP 401: [object Object]`.
+  let payload: { error?: string | { code?: string; message?: string } } = {};
   try {
-    payload = (await res.json()) as { error?: string };
+    payload = (await res.json()) as typeof payload;
   } catch {
     // ignore: 4xx with non-JSON body
   }
+  const errorCode = extractErrorCode(payload.error);
 
-  switch (payload.error) {
+  switch (errorCode) {
     case "authorization_pending":
       return { kind: "pending" };
     case "slow_down":
@@ -137,10 +148,20 @@ export async function pollOnce(args: {
       throw new DeviceFlowExpiredError();
     default:
       throw new DeviceFlowError(
-        `unexpected poll response: HTTP ${res.status}: ${payload.error ?? "(no error key)"}`,
-        payload.error ?? `http_${res.status}`,
+        `unexpected poll response: HTTP ${res.status}: ${errorCode ?? "(no error key)"}`,
+        errorCode ?? `http_${res.status}`,
       );
   }
+}
+
+/** Pull the canonical error code out of either the flat or
+ *  nested envelope shape. */
+function extractErrorCode(
+  err: string | { code?: string; message?: string } | undefined,
+): string | undefined {
+  if (typeof err === "string") return err;
+  if (err && typeof err === "object") return err.code;
+  return undefined;
 }
 
 export type PollUntilDoneOptions = {

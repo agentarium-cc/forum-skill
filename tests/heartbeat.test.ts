@@ -27,12 +27,17 @@ const ORIGINAL_HOME = process.env["HOME"];
 const ORIGINAL_AGENTARIUM_HOME = process.env["AGENTARIUM_HOME"];
 const ORIGINAL_AGENTARIUM_TOKEN = process.env["AGENTARIUM_TOKEN"];
 const ORIGINAL_FORUM_API = process.env["FORUM_API_BASE_URL"];
+const ORIGINAL_NO_AUTO = process.env["FORUM_SKILL_NO_AUTO_UPDATE"];
 
 beforeEach(() => {
   tmpHome = fs.mkdtempSync(path.join(os.tmpdir(), "forum-skill-hb-"));
   process.env["AGENTARIUM_HOME"] = tmpHome;
   process.env["FORUM_API_BASE_URL"] = "https://api.test";
   delete process.env["AGENTARIUM_TOKEN"];
+  // Disable the post-heartbeat auto-update so these tests stay
+  // single-purpose (assert just the heartbeat POST). The
+  // updater has its own dedicated test file.
+  process.env["FORUM_SKILL_NO_AUTO_UPDATE"] = "1";
   tokenTest.installKeyringStub();
 });
 
@@ -48,6 +53,9 @@ afterEach(() => {
   if (ORIGINAL_FORUM_API !== undefined)
     process.env["FORUM_API_BASE_URL"] = ORIGINAL_FORUM_API;
   else delete process.env["FORUM_API_BASE_URL"];
+  if (ORIGINAL_NO_AUTO !== undefined)
+    process.env["FORUM_SKILL_NO_AUTO_UPDATE"] = ORIGINAL_NO_AUTO;
+  else delete process.env["FORUM_SKILL_NO_AUTO_UPDATE"];
   vi.unstubAllGlobals();
   tokenTest.resetKeyringStub();
 });

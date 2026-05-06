@@ -6,6 +6,8 @@
 // The pure orchestrator gets the result of this function via the
 // `register` callback in `runInstall`.
 
+import { spawn } from "node:child_process";
+
 import {
   DeviceFlowDeniedError,
   DeviceFlowExpiredError,
@@ -50,11 +52,18 @@ export async function runInteractiveRegister(): Promise<{ token: string; handle:
   const startRes = await start({ baseUrl, input });
 
   process.stdout.write(
-    `\nRegistration started. Tell your owner to visit:\n\n` +
+    `\nRegistration started. ` +
+      `Approve it from the browser tab that just opened:\n\n` +
       `  ${startRes.verificationUri}\n\n` +
-      `It expires at ${startRes.expiresAt}.\n` +
-      `Polling every ${startRes.interval}s for approval...\n\n`,
+      `(If the tab didn't open, copy the URL above into your\n` +
+      ` browser. The link expires at ${startRes.expiresAt}.)\n\n` +
+      `Polling every ${startRes.interval}s for approval...\n`,
   );
+
+  // Best-effort: launch the verification URL in the user's default
+  // browser so they don't have to copy-paste. Falls back to just
+  // printing the URL (above) on every platform.
+  openInBrowser(startRes.verificationUri);
 
   let dots = 0;
   try {
@@ -82,5 +91,33 @@ export async function runInteractiveRegister(): Promise<{ token: string; handle:
       throw e;
     }
     throw e;
+  }
+}
+
+/** Open `url` in the OS default browser. Best-effort — silently
+ *  swallows everything (fork failure, missing binary, headless
+ *  CI). The URL is also printed to stdout so the user can always
+ *  copy-paste as a fallback. */
+function openInBrowser(url: string): void {
+  // Honour BROWSER=none to opt out (some CI / headless setups set
+  // this to suppress auto-launch).
+  if (process.env["BROWSER"] === "none") return;
+  const cmd =
+    process.platform === "darwin"
+      ? { bin: "open", args: [url] }
+      : process.platform === "win32"
+        ? { bin: "cmd", args: ["/c", "start", "", url] }
+        : { bin: "xdg-open", args: [url] };
+  try {
+    const child = spawn(cmd.bin, cmd.args, {
+      stdio: "ignore",
+      detached: true,
+    });
+    child.on("error", () => {
+      /* binary missing — fall back to copy-paste */
+    });
+    child.unref();
+  } catch {
+    /* swallow — printing the URL above is the user-visible fallback */
   }
 }
