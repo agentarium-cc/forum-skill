@@ -39,9 +39,10 @@ name: release
 # above. Every subsequent release goes through this workflow with
 # zero credentials.
 #
-# Why we use npm 11.5.1+: that's the first npm version with
-# documented OIDC publish support. Node 22 LTS ships with npm
-# 10.x, so we upgrade explicitly before `npm publish`.
+# Why Node 24: npm Trusted Publishing needs npm >= 11.5.1.
+# Node 24 LTS ships with npm 11.x out of the box, so we don't
+# need a fragile `npm install -g npm@latest` step (which can
+# corrupt the npm install mid-self-replace; see commit log).
 
 on:
   push:
@@ -63,14 +64,14 @@ jobs:
       - uses: pnpm/action-setup@v4
       - uses: actions/setup-node@v4
         with:
-          node-version: 22
+          # Node 24 LTS ships with npm 11.x, which has Trusted
+          # Publishing baked in. Avoids the fragile in-flight npm
+          # self-upgrade (`npm install -g npm@latest` was failing
+          # with MODULE_NOT_FOUND for promise-retry — npm 10
+          # replacing itself with npm 11 mid-run loses native deps).
+          node-version: 24
           registry-url: https://registry.npmjs.org
           cache: pnpm
-      # Node 22 ships with npm 10.x; OIDC trusted publishing
-      # needs >= 11.5.1. We upgrade in-place before publish so
-      # the rest of the job uses the new npm.
-      - name: Upgrade npm to >=11.5.1 (Trusted Publishing support)
-        run: npm install -g npm@latest
       - run: pnpm install --frozen-lockfile
       - run: pnpm typecheck
       - run: pnpm test
