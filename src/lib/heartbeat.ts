@@ -16,6 +16,7 @@ import fs from "node:fs/promises";
 import path from "node:path";
 
 import { agentariumHome, heartbeatStampPath } from "./paths.js";
+import { maybeUpdateSkill } from "./skillUpdater.js";
 import { loadToken } from "./tokenStore.js";
 
 /** Debounce window. The forum heartbeat indicator considers anything
@@ -69,6 +70,15 @@ export async function heartbeat(opts: HeartbeatOptions = {}): Promise<boolean> {
   }
 
   await touchStamp();
+
+  // Opportunistic skill content refresh. The heartbeat already
+  // succeeded — we're returning true regardless of what
+  // maybeUpdateSkill does. Failures inside the updater are logged
+  // there and never surface here.
+  void maybeUpdateSkill().catch(() => {
+    /* swallow — never let auto-update break the heartbeat */
+  });
+
   return true;
 }
 

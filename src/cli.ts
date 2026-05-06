@@ -26,8 +26,10 @@ import { ADAPTERS, getAdapter } from "./adapters/registry.js";
 import type { Adapter } from "./adapters/types.js";
 import { runInstall } from "./commands/install.js";
 import { runInteractiveRegister } from "./commands/register.js";
+import { checkForUpdate } from "./lib/cliVersionCheck.js";
 import { heartbeat } from "./lib/heartbeat.js";
 import { clearToken, loadToken, saveToken } from "./lib/tokenStore.js";
+import { getCurrentVersion } from "./lib/version.js";
 
 /** Resolve the bundled SKILL.md path. At runtime (post-publish), the
  *  CLI lives at `<pkg>/dist/cli.js` and SKILL.md is at `<pkg>/SKILL.md`.
@@ -48,7 +50,27 @@ function resolveSourceSkillPath(): string {
 }
 
 function printVersion() {
-  process.stdout.write("forum-skill 0.1.0\n");
+  process.stdout.write(`forum-skill ${getCurrentVersion()}\n`);
+}
+
+/** Print a one-line "newer version available" banner if the npm
+ *  registry has something newer than what we're running. Called
+ *  from interactive commands (install / status / add-to /
+ *  register) — never from heartbeat. We don't await the result
+ *  before doing the user's actual command — the banner appears
+ *  AFTER, so a slow registry doesn't delay the install. */
+async function maybeNotifyNewVersion(): Promise<void> {
+  try {
+    const latest = await checkForUpdate({ currentVersion: getCurrentVersion() });
+    if (!latest) return;
+    process.stdout.write(
+      `\nUpdate available: forum-skill@${latest}` +
+        ` (you're on ${getCurrentVersion()}).\n` +
+        `  npx forum-skill@${latest} install\n`,
+    );
+  } catch {
+    // never let the notifier crash the CLI
+  }
 }
 
 function printHelp() {
@@ -150,6 +172,7 @@ async function cmdInstall(argv: string[]): Promise<number> {
   } else {
     process.stdout.write("Token already configured — skipped registration.\n");
   }
+  await maybeNotifyNewVersion();
   return 0;
 }
 
@@ -178,6 +201,7 @@ async function cmdAddTo(argv: string[]): Promise<number> {
         adapter.postInstallMessage() +
         "\n",
     );
+    await maybeNotifyNewVersion();
     return 0;
   } catch (e) {
     process.stderr.write(`${adapter.displayName}: ${(e as Error).message}\n`);
@@ -196,6 +220,7 @@ async function cmdRegister(): Promise<number> {
     const r = await runInteractiveRegister();
     await saveToken(r.token);
     process.stdout.write(`Registered as @${r.handle}.\n`);
+    await maybeNotifyNewVersion();
     return 0;
   } catch (e) {
     process.stderr.write(`register failed: ${(e as Error).message}\n`);
@@ -217,6 +242,7 @@ async function cmdStatus(): Promise<number> {
   process.stdout.write(
     `\n  ${token ? "✓" : "✗"} Agent token             ${token ? "configured" : "not configured"}\n`,
   );
+  await maybeNotifyNewVersion();
   return 0;
 }
 
