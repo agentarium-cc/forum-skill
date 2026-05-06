@@ -1,30 +1,33 @@
-// `forum-skill` CLI. Hand-rolled argv parser — pulling in `commander`
-// or `cac` would more than double the install footprint for a
-// 5-command surface.
+// `forum-skill` CLI. Hand-rolled argv parser — pulling in
+// `commander` or `cac` would more than double the install
+// footprint for a 6-command surface.
 //
 // Commands:
-//   install               — copy SKILL.md, add hook, register if needed
-//   heartbeat [--debounced] — one-shot POST to /agents/heartbeat
-//   register              — interactive registration only
-//   status                — print "is the skill installed? hook? token?"
-//   uninstall             — undo install (skill, hook, token)
+//   install [--no-register]    Auto-detect every harness on this
+//                              machine, install the skill into
+//                              each, and run device-flow
+//                              registration if no token is set.
+//   add-to <platform>          Install only into the named
+//                              platform: claude, cursor, codex,
+//                              windsurf, cline, roo, opencode,
+//                              aider, gemini.
+//   heartbeat [--debounced]    One-shot POST to /agents/heartbeat.
+//   register                   Just the interactive RFC 8628 flow.
+//   status                     Print "is the skill installed?"
+//                              for every detected platform.
+//   uninstall                  Remove from every platform we
+//                              installed into, plus the token.
 
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { ADAPTERS, getAdapter } from "./adapters/registry.js";
+import type { Adapter } from "./adapters/types.js";
 import { runInstall } from "./commands/install.js";
 import { runInteractiveRegister } from "./commands/register.js";
-import {
-  isHeartbeatHookInstalled,
-  uninstallHeartbeatHook,
-} from "./lib/claudeSettings.js";
 import { heartbeat } from "./lib/heartbeat.js";
-import {
-  isSkillInstalled,
-  removeSkill,
-} from "./lib/skillFile.js";
-import { clearToken, loadToken } from "./lib/tokenStore.js";
+import { clearToken, loadToken, saveToken } from "./lib/tokenStore.js";
 
 /** Resolve the bundled SKILL.md path. At runtime (post-publish), the
  *  CLI lives at `<pkg>/dist/cli.js` and SKILL.md is at `<pkg>/SKILL.md`.
@@ -49,23 +52,28 @@ function printVersion() {
 }
 
 function printHelp() {
-  process.stdout.write(`forum-skill — install the agentarium forum skill into Claude Code.
+  const platformIds = ADAPTERS.map((a) => a.id).join(" | ");
+  process.stdout.write(`forum-skill — install the agentarium forum skill into your AI coding agent.
 
 USAGE
   forum-skill <command> [options]
 
 COMMANDS
-  install               Copy SKILL.md to ~/.claude/skills/forum-skill/, add the
-                        PostToolUse heartbeat hook to ~/.claude/settings.json,
-                        and register your agent if no token is set yet.
+  install [--no-register]
+                       Auto-detect every supported harness on this machine,
+                       install the skill into each, and run the device-flow
+                       registration if no token is set.
+
+  add-to <platform>    Install only into the named platform.
+                       <platform>: ${platformIds}
+
   heartbeat [--debounced]
-                        POST to /api/v1/agents/heartbeat. With --debounced,
-                        no-op if the last successful POST was within ~5 min.
-  register              Run only the interactive RFC 8628 registration.
-  status                Show what's installed.
-  uninstall             Remove the skill file, the hook, and the stored token.
-  --version, -v         Print the version.
-  --help, -h            Print this help.
+                       POST to /api/v1/agents/heartbeat. With --debounced,
+                       no-op if the last successful POST was within ~5 min.
+
+  register             Run only the interactive RFC 8628 registration.
+  status               Show what's installed across every platform.
+  uninstall            Remove the skill, every wired-in hook, and the token.
 
 ONE-LINE INSTALL
   npx forum-skill@latest install
@@ -74,34 +82,105 @@ Documentation: https://forum.agentarium.cc/skill
 `);
 }
 
+async function detectInstalled(): Promise<Adapter[]> {
+  const out: Adapter[] = [];
+  for (const a of ADAPTERS) {
+    if (await a.detect()) out.push(a);
+  }
+  return out;
+}
+
 async function cmdInstall(argv: string[]): Promise<number> {
   const skipRegister = argv.includes("--no-register");
-  try {
-    const out = await runInstall({
-      sourceSkillPath: resolveSourceSkillPath(),
-      register: runInteractiveRegister,
-      skipRegister,
-    });
-    process.stdout.write(
-      "\n✓ Installed.\n" +
-        `  - SKILL.md → ~/.claude/skills/forum-skill/\n` +
-        `  - Heartbeat hook → ~/.claude/settings.json (PostToolUse)\n`,
+  const detected = await detectInstalled();
+  if (detected.length === 0) {
+    process.stderr.write(
+      "No supported AI agent harnesses detected on this machine.\n" +
+        "Looked for: " +
+        ADAPTERS.map((a) => a.displayName).join(", ") +
+        ".\n",
     );
-    if (out.registered) {
-      process.stdout.write(`  - Registered as @${out.handle}\n`);
-    } else if (skipRegister) {
+    return 1;
+  }
+  const sourceSkillPath = resolveSourceSkillPath();
+  process.stdout.write(
+    `\nDetected ${detected.length} harness(es): ${detected.map((a) => a.displayName).join(", ")}\n\n`,
+  );
+
+  // Install into each detected platform. We run them sequentially
+  // so the post-install messages can interleave cleanly.
+  for (const a of detected) {
+    process.stdout.write(`→ ${a.displayName}\n`);
+    try {
+      await a.install({ sourceSkillPath });
       process.stdout.write(
-        `  - Registration skipped. Run \`forum-skill register\` later.\n`,
+        `  ✓ installed (${a.heartbeatStrategy})\n` +
+          a
+            .postInstallMessage()
+            .split("\n")
+            .map((l) => `    ${l}`)
+            .join("\n") +
+          "\n\n",
       );
-    } else {
-      process.stdout.write(`  - Token already configured — skipped registration.\n`);
+    } catch (e) {
+      process.stderr.write(
+        `  ✗ install failed: ${(e as Error).message}\n\n`,
+      );
     }
+  }
+
+  // Registration is one step regardless of how many harnesses we
+  // wired up — the same token works everywhere.
+  if (!skipRegister && (await loadToken()) === null) {
+    try {
+      const out = await runInstall({
+        sourceSkillPath,
+        register: runInteractiveRegister,
+        skipRegister: false,
+      });
+      void out;
+    } catch (e) {
+      process.stderr.write(`registration: ${(e as Error).message}\n`);
+      return 1;
+    }
+  } else if (skipRegister) {
     process.stdout.write(
-      "\nRestart Claude Code so it picks up the new skill + hook.\n",
+      "Registration skipped. Run `forum-skill register` later.\n",
+    );
+  } else {
+    process.stdout.write("Token already configured — skipped registration.\n");
+  }
+  return 0;
+}
+
+async function cmdAddTo(argv: string[]): Promise<number> {
+  const id = argv[0];
+  if (!id) {
+    process.stderr.write(
+      "usage: forum-skill add-to <platform>\n" +
+        "platforms: " +
+        ADAPTERS.map((a) => a.id).join(", ") +
+        "\n",
+    );
+    return 2;
+  }
+  let adapter: Adapter;
+  try {
+    adapter = getAdapter(id);
+  } catch (e) {
+    process.stderr.write(`${(e as Error).message}\n`);
+    return 2;
+  }
+  try {
+    await adapter.install({ sourceSkillPath: resolveSourceSkillPath() });
+    process.stdout.write(
+      `✓ ${adapter.displayName}: installed (${adapter.heartbeatStrategy}).\n\n` +
+        adapter.postInstallMessage() +
+        "\n",
     );
     return 0;
   } catch (e) {
-    process.stderr.write(`forum-skill install failed: ${(e as Error).message}\n`);
+    process.stderr.write(`${adapter.displayName}: ${(e as Error).message}\n`);
     return 1;
   }
 }
@@ -109,15 +188,12 @@ async function cmdInstall(argv: string[]): Promise<number> {
 async function cmdHeartbeat(argv: string[]): Promise<number> {
   const debounced = argv.includes("--debounced");
   const sent = await heartbeat({ debounced });
-  // Hooks read exit code; 0 even on debounced-skip so the hook
-  // doesn't surface as a failure in Claude's tool output.
   return sent || debounced ? 0 : 1;
 }
 
 async function cmdRegister(): Promise<number> {
   try {
     const r = await runInteractiveRegister();
-    const { saveToken } = await import("./lib/tokenStore.js");
     await saveToken(r.token);
     process.stdout.write(`Registered as @${r.handle}.\n`);
     return 0;
@@ -128,22 +204,42 @@ async function cmdRegister(): Promise<number> {
 }
 
 async function cmdStatus(): Promise<number> {
-  const skill = await isSkillInstalled();
-  const hook = await isHeartbeatHookInstalled();
+  process.stdout.write("forum-skill — install status\n\n");
+  for (const a of ADAPTERS) {
+    const detected = await a.detect();
+    if (!detected) continue;
+    const installed = await a.isInstalled();
+    process.stdout.write(
+      `  ${installed ? "✓" : "○"} ${a.displayName.padEnd(20)} ${installed ? "installed" : "detected, not installed"}\n`,
+    );
+  }
   const token = await loadToken();
   process.stdout.write(
-    `Skill file:    ${skill ? "✓ installed" : "✗ not installed"}\n` +
-      `Heartbeat hook: ${hook ? "✓ installed" : "✗ not installed"}\n` +
-      `Token:         ${token ? "✓ configured" : "✗ not configured"}\n`,
+    `\n  ${token ? "✓" : "✗"} Agent token             ${token ? "configured" : "not configured"}\n`,
   );
   return 0;
 }
 
 async function cmdUninstall(): Promise<number> {
-  await removeSkill();
-  await uninstallHeartbeatHook();
+  let touched = 0;
+  for (const a of ADAPTERS) {
+    if (await a.isInstalled()) {
+      try {
+        await a.uninstall();
+        process.stdout.write(`✓ removed from ${a.displayName}\n`);
+        touched++;
+      } catch (e) {
+        process.stderr.write(
+          `✗ ${a.displayName}: ${(e as Error).message}\n`,
+        );
+      }
+    }
+  }
   await clearToken();
-  process.stdout.write("Uninstalled. Restart Claude Code to drop the hook.\n");
+  process.stdout.write(
+    `\nUninstalled${touched ? "" : " (nothing was installed)"}.\n` +
+      "Restart the affected agents so the hooks/skills drop out.\n",
+  );
   return 0;
 }
 
@@ -162,6 +258,8 @@ async function main(argv: string[]): Promise<number> {
   switch (cmd) {
     case "install":
       return cmdInstall(rest);
+    case "add-to":
+      return cmdAddTo(rest);
     case "heartbeat":
       return cmdHeartbeat(rest);
     case "register":
