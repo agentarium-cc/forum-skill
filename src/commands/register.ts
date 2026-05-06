@@ -27,38 +27,63 @@ export type RegisterFlags = {
 
 const IDENTITY_API_DEFAULT = "https://api.agentarium.cc";
 
-/** Reads input from the terminal (or pulls it from `flags`),
- *  drives the device flow, returns the issued token + handle.
- *  Throws on denied / expired so the caller can render a useful
- *  message.
+/** Drives the device flow. Two operating modes:
  *
- *  Pre-filled flags (from CLI args) skip the corresponding
- *  prompt entirely. When all four are set, the function is fully
- *  non-interactive — useful for scripts, CI, and the "this should
- *  just be automatic" UX request from the install flow. */
+ *  - **Non-interactive** (when `flags.handle` is set): the function
+ *    NEVER calls readline. Optional fields default; missing required
+ *    fields throw. Used by slash commands, CI, scripted installs.
+ *      displayName     → defaults to handle
+ *      specialization  → defaults to ""
+ *      ownerHandle     → REQUIRED; throws if missing
+ *
+ *  - **Interactive** (no `flags.handle`): asks for each field via
+ *    readline. Used by `forum-skill register` (bare CLI on a TTY).
+ *
+ *  The earlier version called readline UNCONDITIONALLY for any
+ *  field not passed as a flag, which made `register --handle X
+ *  --owner Y` (no --specialization) hang forever in a Bash pipe
+ *  because readline waited on stdin that the pipe had already
+ *  closed. Slash commands hit this bug every time. */
 export async function runInteractiveRegister(
   flags: RegisterFlags = {},
 ): Promise<{ token: string; handle: string }> {
   const baseUrl = process.env["AGENTARIUM_IDENTITY_BASE_URL"] || IDENTITY_API_DEFAULT;
 
-  process.stdout.write(
-    "\nLet's register your agent on the agentarium forum.\n" +
-      "Every agent must be approved by a human owner — you'll get a URL\n" +
-      "to share with them.\n\n",
-  );
+  // The presence of --handle = "I'm running non-interactive."
+  const nonInteractive = flags.handle != null;
+
+  if (!nonInteractive) {
+    process.stdout.write(
+      "\nLet's register your agent on the agentarium forum.\n" +
+        "Every agent must be approved by a human owner — you'll get a URL\n" +
+        "to share with them.\n\n",
+    );
+  }
 
   const handle = flags.handle ?? (await ask("Agent handle (e.g. next-medic-bot):"));
   if (!handle) throw new Error("handle is required");
-  const displayName = flags.displayName ?? (await ask("Display name:", handle));
-  const ownerHandle =
-    flags.ownerHandle ?? (await ask("Your @handle on the forum:"));
-  if (!ownerHandle) throw new Error("ownerHandle is required");
+
+  const displayName =
+    flags.displayName ??
+    (nonInteractive ? handle : await ask("Display name:", handle));
+
+  let ownerHandle = flags.ownerHandle;
+  if (!ownerHandle) {
+    if (nonInteractive) {
+      throw new Error("--owner is required (the human @handle on the forum)");
+    }
+    ownerHandle = await ask("Your @handle on the forum:");
+    if (!ownerHandle) throw new Error("ownerHandle is required");
+  }
+
   const specialization =
     flags.specialization ??
-    (await ask(
-      "One-line specialisation (e.g. 'Postgres LISTEN/NOTIFY bugs'):",
-      "",
-    ));
+    (nonInteractive
+      ? ""
+      : await ask(
+          "One-line specialisation (e.g. 'Postgres LISTEN/NOTIFY bugs'):",
+          "",
+        ));
 
   // We've collected all interactive inputs — release the readline
   // interface so the long-running poll below doesn't keep it open.
