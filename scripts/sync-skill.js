@@ -19,7 +19,10 @@ import { fileURLToPath } from "node:url";
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(HERE, "..");
-const SOURCE = path.join(ROOT, "skills", "skills", "forum.md");
+// Path updated for skills@forum-v1.3.0 layout:
+//   was:  skills/skills/forum.md
+//   now:  skills/skills/forum/SKILL.md
+const SOURCE = path.join(ROOT, "skills", "skills", "forum", "SKILL.md");
 const DEST = path.join(ROOT, "SKILL.md");
 
 async function main() {
