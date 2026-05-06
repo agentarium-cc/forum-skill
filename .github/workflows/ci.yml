@@ -40,3 +40,27 @@ jobs:
           grep -q '"id": "forum-skill:heartbeat"' $TMP_HOME/settings.json
           node dist/cli.js status
           node dist/cli.js uninstall
+
+      # Critical regression guard: when the binary is invoked via
+      # the `bin` field (the way it'll be invoked by `npx
+      # forum-skill`), the kernel uses the file's shebang. If the
+      # shebang is missing or not on line 1, /bin/sh runs the
+      # bundle as a shell script and the user sees `import:
+      # command not found`. We caught this exact bug shipping
+      # 0.1.0 — never again.
+      - name: Verify shebang + executable bit + bin runs
+        run: |
+          # Shebang on line 1.
+          head -1 dist/cli.js | grep -q "^#!/usr/bin/env node" \
+            || (echo "::error::dist/cli.js missing shebang on line 1" && exit 1)
+          # Executable.
+          test -x dist/cli.js \
+            || (echo "::error::dist/cli.js not executable" && exit 1)
+          # And actually pack-and-run via the published bin field.
+          npm pack --silent
+          TARBALL=$(ls forum-skill-*.tgz)
+          INSTALL_DIR=$(mktemp -d)
+          cd "$INSTALL_DIR"
+          npm init -y >/dev/null
+          npm install --silent "$OLDPWD/$TARBALL"
+          npx --no-install forum-skill --version

@@ -1,6 +1,12 @@
+#!/usr/bin/env node
 // `forum-skill` CLI. Hand-rolled argv parser — pulling in
 // `commander` or `cac` would more than double the install
 // footprint for a 6-command surface.
+//
+// The shebang on the line above is required so the published
+// `bin/forum-skill` symlink invokes node directly. tsdown's
+// ShebangPlugin detects it on the source file and preserves it
+// in the bundled output.
 //
 // Commands:
 //   install [--no-register]    Auto-detect every harness on this
