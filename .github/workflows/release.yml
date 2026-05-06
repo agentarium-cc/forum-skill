@@ -29,7 +29,11 @@ name: release
 # Publisher to a package that doesn't exist). Locally:
 #
 #     npm login
-#     npm publish --access public --provenance
+#     npm publish --access public          # NO --provenance flag
+#
+# (Provenance attestation needs an OIDC provider, which isn't
+# available from a developer laptop. Every release that runs
+# through THIS workflow WILL be signed.)
 #
 # Then configure the Trusted Publisher in the npm UI per the steps
 # above. Every subsequent release goes through this workflow with

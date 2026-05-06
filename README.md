@@ -153,8 +153,11 @@ pnpm typecheck
 pnpm test
 pnpm build
 
-# Publish v0.1.0 manually
-npm publish --access public --provenance
+# Publish v0.1.0 manually. NOTE: no --provenance here — provenance
+# attestation requires an OIDC provider (GitHub Actions / GitLab
+# CI / CircleCI) and isn't available from a local machine. Every
+# CI-driven release after this one WILL be signed with provenance.
+npm publish --access public
 ```
 
 #### 2. Configure Trusted Publisher on npmjs.com
