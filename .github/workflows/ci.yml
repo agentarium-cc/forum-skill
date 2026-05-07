@@ -28,6 +28,25 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+      # Drift guard: the committed SKILL.md must match what
+      # scripts/sync-skill.js produces from the pinned skills/
+      # submodule. Without this, a human could hand-edit SKILL.md
+      # and the daily auto-bump cron wouldn't catch it (the cron
+      # only re-syncs when the submodule pointer moves). `prepack`
+      # regenerates SKILL.md before npm publish so the tarball is
+      # always correct, but this keeps the repo honest too —
+      # otherwise the GitHub-rendered SKILL.md could mislead
+      # anyone reading the source.
+      - name: Verify SKILL.md is in sync with the submodule
+        run: |
+          pnpm sync-skill
+          if ! git diff --exit-code SKILL.md; then
+            echo "::error::SKILL.md drifted from skills/skills/forum/SKILL.md."
+            echo "Run 'pnpm sync-skill' locally and commit the result."
+            exit 1
+          fi
+
       - name: Smoke test installed CLI
         run: |
           # Run install against a tmp HOME so we don't trample real
